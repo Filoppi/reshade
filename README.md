@@ -8,6 +8,7 @@ V-Sync still works correctly.
 
 I couldn't be bothered to write my own custom injector and then proxy it to ReShade or viceversa, so, given that ReShade already had a hook on the function that needed overriding, and that ReShade is a must to fix the blurriness and orange filter this game has, I thought I'd just make a branch of it. The same fix was also possible with the SpecialK mod, but it caused crashed on startup and alt-tab.
 This is based on ReShade master, but at this point ReShade seems very stable and Mafia III doesn't need any new features from it, so I don't even need to keep merging this with new versions.
+
 =======
 
 ReShade
