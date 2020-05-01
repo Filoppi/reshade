@@ -1,3 +1,15 @@
+ReShade (Mafia III fix)
+=======
+
+This version of ReShade is specific to fix Mafia III fullscreen refresh rate.
+When going (or starting) fullscreen, the game is forcing a refresh rate of 60, unless 60 isn't supported by the monitor, despite the game being perfectly capable of running at higher frame rates and at higher refresh rates when windowed.
+With this mod, it uses the current monitor default setting, you can even change it after the game has started and it refreshes correctly.
+V-Sync still works correctly.
+
+I couldn't be bothered to write my own custom injector and then proxy it to ReShade or viceversa, so, given that ReShade already had a hook on the function that needed overriding, and that ReShade is a must to fix the blurriness and orange filter this game has, I thought I'd just make a branch of it. The same fix was also possible with the SpecialK mod, but it caused crashed on startup and alt-tab.
+This is based on ReShade master, but at this point ReShade seems very stable and Mafia III doesn't need any new features from it, so I don't even need to keep merging this with new versions.
+=======
+
 ReShade
 =======
 
