@@ -190,6 +190,10 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory_CreateSwapChain(IDXGIFactory *pFactory, I
 	if (pDevice == nullptr || pDesc == nullptr || ppSwapChain == nullptr)
 		return DXGI_ERROR_INVALID_CALL;
 
+	// Leaving this to 0 means it uses the current monitor default setting
+	pDesc->BufferDesc.RefreshRate.Numerator = 0;
+	pDesc->BufferDesc.RefreshRate.Denominator = 1;
+
 	dump_swapchain_desc(*pDesc);
 
 	com_ptr<IUnknown> device_proxy;
