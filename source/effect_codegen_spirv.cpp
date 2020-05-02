@@ -575,73 +575,74 @@ private:
 	}
 	id   define_uniform(const location &, uniform_info &info) override
 	{
-		// Use similar base packing rules to HLSL
-		const uint32_t array_stride = 16u;
-		const uint32_t matrix_stride = 16u;
-		info.size = info.type.is_matrix() ? matrix_stride * info.type.cols : info.type.rows * 4;
-		if (info.type.is_array())
-			info.size = std::max(array_stride, info.size) * info.type.array_length;
-
 		if (_uniforms_to_spec_constants && info.has_initializer_value)
 		{
 			const id res = emit_constant(info.type, info.initializer_value, true);
 
 			add_name(res, info.name.c_str());
 
-			// External specialization constants need to be scalars
-			if (info.type.is_scalar())
-			{
-				assert(info.size == 4);
-				assert(info.offset == 0);
+			const auto add_spec_constant = [this](const spirv_instruction &inst, const uniform_info &info, const constant &initializer_value, size_t initializer_offset) {
+				assert(inst.op == spv::OpSpecConstant || inst.op == spv::OpSpecConstantTrue || inst.op == spv::OpSpecConstantFalse);
 
-				const uint32_t spec_id = uint32_t(_module.spec_constants.size());
-				add_decoration(res, spv::DecorationSpecId, { spec_id });
+				uint32_t spec_id = static_cast<uint32_t>(_module.spec_constants.size());
+				add_decoration(inst.result, spv::DecorationSpecId, { spec_id });
 
-				_module.spec_constants.push_back(info);
-			}
-			else
-			{
 				uniform_info scalar_info = info;
 				scalar_info.type.rows = 1;
 				scalar_info.type.cols = 1;
 				scalar_info.size = 4;
+				scalar_info.offset = static_cast<uint32_t>(initializer_offset);
 				scalar_info.initializer_value = {};
+				scalar_info.initializer_value.as_uint[0] = initializer_value.as_uint[initializer_offset];
+
+				_module.spec_constants.push_back(scalar_info);
+			};
+
+			const spirv_instruction &base_inst = _types_and_constants.instructions.back();
+			assert(base_inst.result == res);
+
+			// External specialization constants need to be scalars
+			if (info.type.is_scalar())
+			{
+				add_spec_constant(base_inst, info, info.initializer_value, 0);
+			}
+			else
+			{
+				assert(base_inst.op == spv::OpSpecConstantComposite);
 
 				// Add each individual scalar component of the constant as a separate external specialization constant
-				const spirv_instruction &composite_inst = _types_and_constants.instructions.back();
-				assert(composite_inst.result == res && composite_inst.op == spv::OpSpecConstantComposite);
-
-				for (size_t row = 0; row < composite_inst.operands.size(); ++row)
+				for (size_t i = 0; i < (info.type.is_array() ? base_inst.operands.size() : 1); ++i)
 				{
-					const spirv_instruction &row_inst = *std::find_if(_types_and_constants.instructions.rbegin(), _types_and_constants.instructions.rend(),
-						[elem = composite_inst.operands[row]](const auto &it) { return it.result == elem; });
+					spirv_instruction elem_inst = base_inst;
+					reshadefx::constant initializer_value = info.initializer_value;
 
-					if (row_inst.op != spv::OpSpecConstantComposite)
+					if (info.type.is_array())
 					{
-						assert(row_inst.op == spv::OpSpecConstant || row_inst.op == spv::OpSpecConstantTrue || row_inst.op == spv::OpSpecConstantFalse);
+						elem_inst = *std::find_if(_types_and_constants.instructions.rbegin(), _types_and_constants.instructions.rend(),
+							[elem = base_inst.operands[i]](const auto &it) { return it.result == elem; });
 
-						uint32_t spec_id = static_cast<uint32_t>(_module.spec_constants.size());
-						add_decoration(row_inst.result, spv::DecorationSpecId, { spec_id });
-
-						scalar_info.offset = static_cast<uint32_t>(row);
-						scalar_info.initializer_value.as_uint[0] = info.initializer_value.as_uint[scalar_info.offset];
-
-						_module.spec_constants.push_back(scalar_info);
-						continue;
+						assert(initializer_value.array_data.size() == base_inst.operands.size());
+						initializer_value = initializer_value.array_data[i];
 					}
 
-					for (size_t col = 0; col < row_inst.operands.size(); ++col)
+					for (size_t row = 0; row < elem_inst.operands.size(); ++row)
 					{
-						const spirv_instruction &col_inst = *std::find_if(_types_and_constants.instructions.rbegin(), _types_and_constants.instructions.rend(),
-							[elem = row_inst.operands[col]](const auto &it) { return it.result == elem; });
+						const spirv_instruction &row_inst = *std::find_if(_types_and_constants.instructions.rbegin(), _types_and_constants.instructions.rend(),
+							[elem = elem_inst.operands[row]](const auto &it) { return it.result == elem; });
 
-						uint32_t spec_id = static_cast<uint32_t>(_module.spec_constants.size());
-						add_decoration(col_inst.result, spv::DecorationSpecId, { spec_id });
+						if (row_inst.op != spv::OpSpecConstantComposite)
+						{
+							add_spec_constant(row_inst, info, initializer_value, row);
+							continue;
+						}
 
-						scalar_info.offset = static_cast<uint32_t>(row * info.type.cols + col);
-						scalar_info.initializer_value.as_uint[0] = info.initializer_value.as_uint[scalar_info.offset];
+						for (size_t col = 0; col < row_inst.operands.size(); ++col)
+						{
+							const spirv_instruction &col_inst = *std::find_if(_types_and_constants.instructions.rbegin(), _types_and_constants.instructions.rend(),
+								[elem = row_inst.operands[col]](const auto &it) { return it.result == elem; });
 
-						_module.spec_constants.push_back(scalar_info);
+							add_spec_constant(col_inst, info, initializer_value, row * info.type.cols + col);
+						}
 					}
 				}
 			}
@@ -664,6 +665,17 @@ private:
 				add_decoration(_global_ubo_variable, spv::DecorationDescriptorSet, { 0 });
 				add_decoration(_global_ubo_variable, spv::DecorationBinding, { 0 });
 			}
+
+			const uint32_t array_stride = 16u;
+			const uint32_t matrix_stride = 16u;
+
+			// Use similar base packing rules to HLSL
+			if (info.type.is_matrix())
+				info.size = align_up(info.type.cols * 4, matrix_stride, info.type.rows);
+			else
+				info.size = info.type.rows * 4;
+			if (info.type.is_array())
+				info.size = align_up(info.size, array_stride, info.type.array_length);
 
 			info.offset = _module.total_uniform_size;
 			// Make sure member does not have an improper straddle
@@ -691,6 +703,8 @@ private:
 
 			if (info.type.is_matrix())
 			{
+				// Read matrices in column major layout, even though they are actually row major, to avoid transposing them on every access (since SPIR-V uses column matrices)
+				// TODO: This technically only works with square matrices and falls apart with arrays
 				add_member_decoration(_global_ubo_type, member_index, spv::DecorationColMajor);
 				add_member_decoration(_global_ubo_type, member_index, spv::DecorationMatrixStride, { matrix_stride });
 			}
